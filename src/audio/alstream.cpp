@@ -20,6 +20,7 @@
 */
 
 #include "alstream.h"
+#include "workerpause.h"
 
 #include "sharedstate.h"
 #include "sharedmidistate.h"
@@ -282,7 +283,7 @@ void ALStream::openSource(const std::string &filename)
 
 void ALStream::stopStream()
 {
-	threadTermReq.set();
+	AudioWorkerPause::shared().stop(threadTermReq);
 
 	if (thread)
 	{
@@ -329,7 +330,7 @@ void ALStream::startStream(double offset)
 	preemptPause = false;
 	streamInited.clear();
 	sourceExhausted.clear();
-	threadTermReq.clear();
+	threadTermReq.store(false);
 
 	startOffset = offset;
 	procFrames = offset * source->sampleRate();
@@ -352,14 +353,14 @@ void ALStream::pauseStream()
 
 void ALStream::resumeStream()
 {
-	SDL_LockMutex(pauseMut);
-
-	if (preemptPause)
-		preemptPause = false;
-	else
-		AL::Source::play(alSrc);
-
-	SDL_UnlockMutex(pauseMut);
+    AudioWorkerPause::shared().playWhenActive(threadTermReq, [&] {
+        SDL_LockMutex(pauseMut);
+        if (preemptPause)
+            preemptPause = false;
+        else
+            AL::Source::play(alSrc);
+        SDL_UnlockMutex(pauseMut);
+    });
 }
 
 void ALStream::checkStopped()
@@ -438,6 +439,7 @@ void ALStream::streamData()
 	 * refill and queue them up again */
 	while (true)
 	{
+		if (!AudioWorkerPause::shared().wait(threadTermReq)) return;
 		shState->rtData().syncPoint.passSecondarySync();
 
 		ALint procBufs = AL::Source::getProcBufferCount(alSrc);
@@ -520,7 +522,10 @@ void ALStream::streamData()
 		 * exhausted its queue. */
 		if (!sourceExhausted &&
 		    AL::Source::getState(alSrc) == AL_STOPPED)
-			AL::Source::play(alSrc);
+			AudioWorkerPause::shared().playWhenActive(threadTermReq, [&] {
+                if (AL::Source::getState(alSrc) == AL_STOPPED)
+                    AL::Source::play(alSrc);
+            });
 
 		if (threadTermReq)
 			break;

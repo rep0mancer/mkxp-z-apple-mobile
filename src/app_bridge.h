@@ -507,6 +507,8 @@ void        mkxp_applySessionConfig(const MKXPSessionConfig *config);
 //
 // An unknown key writes a warning to the log and changes nothing.
 void        mkxp_setSetting(const char *key, const char *value);
+// The presentationFPS setting accepts 40 or 60. Zero follows the game.
+int         mkxp_getPresentationFPS(void);
 
 // Lines about the running engine for the host's debug overlay, one per
 // line, such as the RGSS version, the Ruby version and the renderer.
@@ -855,6 +857,7 @@ static inline bool        mkxp_isGLContextBroken(void) { return false; }
 
 static inline void        mkxp_setFastForwardMultiplier(int multiplier) { (void)multiplier; }
 static inline int         mkxp_getFastForwardMultiplier(void) { return 1; }
+static inline int         mkxp_getPresentationFPS(void) { return 0; }
 static inline void        mkxp_resetSessionState(void) {}
 
 static inline int         mkxp_run_app(int argc, char **argv) { (void)argc; (void)argv; return 0; }

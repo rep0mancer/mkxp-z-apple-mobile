@@ -22,6 +22,8 @@
 #ifndef ALSTREAM_H
 #define ALSTREAM_H
 
+#include <atomic>
+
 #include "al-util.h"
 #include "sdl-util.h"
 
@@ -61,7 +63,7 @@ struct ALStream
 	AtomicFlag streamInited;
 	AtomicFlag sourceExhausted;
 
-	AtomicFlag threadTermReq;
+	std::atomic<bool> threadTermReq{false};
 
 	AtomicFlag needsRewind;
 	double startOffset;

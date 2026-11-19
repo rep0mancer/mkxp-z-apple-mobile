@@ -60,6 +60,8 @@ $ENGINE/src/patcher.cpp
 $ENGINE/src/util/iniconfig.cpp
 "
 
+FRAMEWORKS=""
+if [ "$(uname -s)" = Darwin ]; then FRAMEWORKS="-framework CoreFoundation"; fi
 mkdir -p "$BUILD"
 
 # MKXPZ_MOBILE=0 selects the inline no-op host bridge in
@@ -71,7 +73,7 @@ $CXX -std=c++17 -g -O0 \
     -I"$ENGINE/src" \
     -I"$TESTS" \
     -o "$BINARY" \
-    "$TESTS"/*.cpp $ENGINE_SOURCES ||
+    "$TESTS"/*.cpp $ENGINE_SOURCES $FRAMEWORKS ||
     {
         echo "error: the tests did not build." >&2
         exit 2

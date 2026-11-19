@@ -84,6 +84,7 @@ public:
     DECL_ATTR( LastMileScaling, bool )
     DECL_ATTR( Threadsafe, bool )
     double averageFrameRate();
+    double presentedFrameRate();
 
 	/* <internal> */
 	Scene *getScreen() const;

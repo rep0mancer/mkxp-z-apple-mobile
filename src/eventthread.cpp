@@ -53,6 +53,9 @@ extern "C" bool mkxp_getTouchMouseEnabled(void);
 
 #include <TargetConditionals.h>
 #include "app_bridge.h"
+#if MKXPZ_MOBILE && TARGET_OS_IOS
+#include "util/eventwake.h"
+#endif
 extern void mkxpGL_GetDrawableSize(SDL_Window *win, int *w, int *h);
 extern void mkxpGL_RefreshDrawableSize(SDL_Window *win, int *w, int *h);
 
@@ -161,6 +164,29 @@ void EventThread::cursorTimer()
 	hideCursorTimerID = SDL_AddTimer(500, cursorTimerCallback, this);
 }
 
+#if MKXPZ_MOBILE && TARGET_OS_IOS
+static EventWake &mainEventWake()
+{
+    static EventWake wake(CFRunLoopGetMain());
+    return wake;
+}
+#endif
+
+void EventThread::wakeEventLoop()
+{
+#if MKXPZ_MOBILE && TARGET_OS_IOS
+    mainEventWake().signal();
+#endif
+}
+
+void EventThread::pushEvent(SDL_Event *event)
+{
+    // Notify after SDL enqueues the event. SDL's event watches fire before
+    // enqueue, so a wake sent by a watch can arrive too early.
+    if (SDL_PushEvent(event) == 1)
+        wakeEventLoop();
+}
+
 void EventThread::process(RGSSThreadData &rtData)
 {
     SDL_Event event;
@@ -226,7 +252,17 @@ void EventThread::process(RGSSThreadData &rtData)
     
     while (true)
     {
-#if MKXPZ_MOBILE
+#if MKXPZ_MOBILE && TARGET_OS_IOS
+        SDL_PumpEvents();
+        const int queued = SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+        if (queued < 0) break;
+        if (queued == 0) {
+            // PumpEvents services UIKit's default and tracking modes. Allow a
+            // refresh for devices SDL polls, even if they emit no wake event.
+            mainEventWake().wait(mkxp_isPaused() ? 0.25 : 0.016);
+            continue;
+        }
+#elif MKXPZ_MOBILE
         /* Timed waits keep the main run loop spinning so SwiftUI
          * alerts stay tappable while the engine session is alive. */
         const int waitRc = SDL_WaitEventTimeout(&event, 16);
@@ -750,7 +786,7 @@ void EventThread::requestTerminate()
 {
     SDL_Event event;
     event.type = SDL_QUIT;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestFullscreenMode(bool mode)
@@ -761,7 +797,7 @@ void EventThread::requestFullscreenMode(bool mode)
     SDL_Event event;
     event.type = usrIdStart + REQUEST_SETFULLSCREEN;
     event.user.code = static_cast<Sint32>(mode);
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestWindowResize(int width, int height)
@@ -771,7 +807,7 @@ void EventThread::requestWindowResize(int width, int height)
     event.type = usrIdStart + REQUEST_WINRESIZE;
     event.window.data1 = width;
     event.window.data2 = height;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestWindowReposition(int x, int y)
@@ -781,7 +817,7 @@ void EventThread::requestWindowReposition(int x, int y)
     event.type = usrIdStart + REQUEST_WINREPOSITION;
     event.window.data1 = x;
     event.window.data2 = y;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestWindowCenter()
@@ -789,7 +825,7 @@ void EventThread::requestWindowCenter()
     shState->rtData().rqWindowAdjust.set();
     SDL_Event event;
     event.type = usrIdStart + REQUEST_WINCENTER;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestWindowRename(const char *title)
@@ -797,7 +833,7 @@ void EventThread::requestWindowRename(const char *title)
     SDL_Event event;
     event.type = usrIdStart + REQUEST_WINRENAME;
     event.user.data1 = (void*)title;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestShowCursor(bool mode)
@@ -805,7 +841,7 @@ void EventThread::requestShowCursor(bool mode)
     SDL_Event event;
     event.type = usrIdStart + REQUEST_SETCURSORVISIBLE;
     event.user.code = mode;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestTextInputMode(bool mode)
@@ -813,14 +849,14 @@ void EventThread::requestTextInputMode(bool mode)
     SDL_Event event;
     event.type = usrIdStart + REQUEST_TEXTMODE;
     event.user.code = mode;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::requestSettingsMenu()
 {
     SDL_Event event;
     event.type = usrIdStart + REQUEST_SETTINGS;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::showMessageBox(const char *body, int flags)
@@ -854,7 +890,7 @@ void EventThread::showMessageBox(const char *body, int flags)
     event.user.code = flags;
     event.user.data1 = strdup(body);
     event.type = usrIdStart + REQUEST_MESSAGEBOX;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 
     /* Keep repainting screen while box is open */
     try {
@@ -895,7 +931,7 @@ void EventThread::notifyFrame()
     SDL_Event event;
     event.user.code = round(shState->graphics().averageFrameRate());
     event.user.type = usrIdStart + UPDATE_FPS;
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::notifyGameScreenChange(const SDL_Rect &screen)
@@ -908,7 +944,7 @@ void EventThread::notifyGameScreenChange(const SDL_Rect &screen)
     event.user.code = screen.y;
     event.user.data1 = reinterpret_cast<void*>(screen.w);
     event.user.data2 = reinterpret_cast<void*>(screen.h);
-    SDL_PushEvent(&event);
+    pushEvent(&event);
 }
 
 void EventThread::lockText(bool lock)

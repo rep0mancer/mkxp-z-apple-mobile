@@ -94,6 +94,8 @@ public:
     
 
 	static bool allocUserEvents();
+    static void pushEvent(SDL_Event *event);
+    static void wakeEventLoop();
 
 	/* Reset all input state arrays (for session transitions on iOS) */
 	static void resetAllInputStates();

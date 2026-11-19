@@ -36,6 +36,7 @@
 #endif
 
 static std::atomic<bool> s_gameReady{false};
+static std::atomic<int> s_presentationFPS{0};
 
 // Debug log path for Ruby errors (empty = disabled).
 static std::mutex s_debugLogMutex;
@@ -360,7 +361,7 @@ void mkxp_requestTerminate(void) {
     // will pick it up and initiate normal shutdown.
     SDL_Event event;
     event.type = SDL_QUIT;
-    SDL_PushEvent(&event);
+    EventThread::pushEvent(&event);
 }
 
 int mkxp_isEngineTerminated(void) {
@@ -391,7 +392,7 @@ void mkxp_setEngineTerminated(void) {
 double mkxp_getAverageFPS(void) {
     if (s_engineTerminated.load(std::memory_order_acquire)) return 0.0;
     if (!SharedState::instance) return 0.0;
-    return SharedState::instance->graphics().averageFrameRate();
+    return SharedState::instance->graphics().presentedFrameRate();
 }
 
 int mkxp_getTargetFPS(void) {
@@ -596,7 +597,7 @@ void mkxp_injectKeyEvent(int scancode, int pressed) {
     event.key.keysym.scancode = (SDL_Scancode)scancode;
     event.key.keysym.sym    = SDL_GetKeyFromScancode((SDL_Scancode)scancode);
     event.key.keysym.mod    = KMOD_NONE;
-    SDL_PushEvent(&event);
+    EventThread::pushEvent(&event);
 }
 
 /* Mirrors what SDL's own touch-to-mouse synthesis emits
@@ -621,7 +622,7 @@ void mkxp_injectPointerEvent(int x, int y, MKXPPointerPhase phase) {
         motion.motion.state     = pressed ? 0 : SDL_BUTTON_LMASK;
         motion.motion.x         = x;
         motion.motion.y         = y;
-        SDL_PushEvent(&motion);
+        EventThread::pushEvent(&motion);
     }
 
     if (pressed || released) {
@@ -636,7 +637,7 @@ void mkxp_injectPointerEvent(int x, int y, MKXPPointerPhase phase) {
         button.button.clicks    = 1;
         button.button.x         = x;
         button.button.y         = y;
-        SDL_PushEvent(&button);
+        EventThread::pushEvent(&button);
     }
 }
 
@@ -808,7 +809,7 @@ void mkxp_pushTextInput(const char *utf8) {
         event.text.windowID   = winID;
         std::memcpy(event.text.text, p, chunk);
         event.text.text[chunk] = '\0';
-        SDL_PushEvent(&event);
+        EventThread::pushEvent(&event);
 
         p         += chunk;
         remaining -= chunk;
@@ -979,6 +980,7 @@ void mkxp_requestResume(void) {
     // first post-resume frame has been swapped to the screen.
     s_needsFrameRenderedSignal.store(true, std::memory_order_release);
     s_pauseCV.notify_one();
+    EventThread::wakeEventLoop();
 }
 
 void mkxp_checkPause(void) {
@@ -1085,6 +1087,10 @@ void mkxp_applySessionConfig(const MKXPSessionConfig *config) {
     mkxp_applyPerGameSettings(config->verticalAlignment, mkxp_getPostloadEnabled());
 }
 
+int mkxp_getPresentationFPS(void) {
+    return s_presentationFPS.load(std::memory_order_relaxed);
+}
+
 void mkxp_setSetting(const char *key, const char *value) {
     if (!key || !value) return;
     const std::string k(key);
@@ -1108,6 +1114,11 @@ void mkxp_setSetting(const char *key, const char *value) {
         mkxp_setUseInGameKeyboard(on);
     } else if (k == "joiplayCompat") {
         mkxp_setJoiplayCompat(on);
+    } else if (k == "presentationFPS") {
+        int cap = 0;
+        if (v == "40") cap = 40;
+        if (v == "60") cap = 60;
+        s_presentationFPS.store(cap, std::memory_order_relaxed);
     } else if (k == "networkEnabled") {
         mkxp_setNetworkEnabled(on);
     } else {

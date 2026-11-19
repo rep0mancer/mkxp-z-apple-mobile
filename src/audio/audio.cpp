@@ -20,6 +20,7 @@
 */
 
 #include "audio.h"
+#include "workerpause.h"
 
 #include "audiostream.h"
 #include "soundemitter.h"
@@ -69,7 +70,7 @@ struct AudioPrivate
 	struct
 	{
 		SDL_Thread *thread;
-		AtomicFlag termReq;
+		std::atomic<bool> termReq{false};
 		MeWatchState state;
 	} meWatch;
 
@@ -92,7 +93,7 @@ struct AudioPrivate
 
 	~AudioPrivate()
 	{
-		meWatch.termReq.set();
+		AudioWorkerPause::shared().stop(meWatch.termReq);
 		SDL_WaitThread(meWatch.thread, 0);
         for (auto track : bgmTracks)
             delete track;
@@ -115,7 +116,7 @@ struct AudioPrivate
 		{
 			syncPoint.passSecondarySync();
 
-			if (meWatch.termReq)
+			if (!AudioWorkerPause::shared().wait(meWatch.termReq))
 				return;
 
 			switch (meWatch.state)
@@ -437,6 +438,7 @@ void Audio::reset()
  * AL_PLAYING, pause those, and stash their IDs for resumeSources(). */
 void Audio::pauseSources()
 {
+	AudioWorkerPause::shared().setPaused(true);
 	p->pausedSourceIDs.clear();
 
 	/* Gather all source IDs */
@@ -464,6 +466,10 @@ void Audio::resumeSources()
 	for (ALuint src : p->pausedSourceIDs)
 		alSourcePlay(src);
 	p->pausedSourceIDs.clear();
+	AudioWorkerPause::shared().setPaused(false);
 }
 
-Audio::~Audio() { delete p; }
+Audio::~Audio() {
+    AudioWorkerPause::shared().setPaused(false);
+    delete p;
+}

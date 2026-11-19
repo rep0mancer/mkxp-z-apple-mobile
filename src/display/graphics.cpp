@@ -31,6 +31,7 @@
 #include "eventthread.h"
 #include "filesystem.h"
 #include "framerateaverage.h"
+#include "presentationclock.h"
 #include "gl-fun.h"
 #include "gl-util.h"
 #include "glstate.h"
@@ -508,7 +509,10 @@ struct GraphicsPrivate {
     bool integerScaleActive;
     bool integerLastMileScaling;
     
-    FrameRateAverage frameRateAverage;
+    // Scripts and button repeat use the cadence before presentation filtering.
+    FrameRateAverage scriptFrames;
+    FrameRateAverage presentedFrames;
+    PresentationClock presentationClock;
     SDL_mutex *avgFPSLock;
 
     SDL_mutex *glResourceLock;
@@ -1101,9 +1105,9 @@ struct GraphicsPrivate {
         fpsLimiter.resetFrameAdjust();
     }
     
-    double averageFPS() {
+    double averageFPS(const FrameRateAverage &samples) {
         SDL_LockMutex(avgFPSLock);
-        double ret = frameRateAverage.average(frameRate);
+        double ret = samples.average(frameRate);
         SDL_UnlockMutex(avgFPSLock);
         return ret;
     }
@@ -1148,15 +1152,49 @@ struct GraphicsPrivate {
 
     // Not shState->runTime(): fast-forward speeds that up, and this rate
     // must count the frames that the screen shows.
-    void updateAvgFPS() {
+    void updateAvgFPS(bool shown = true) {
+        const double now = mkxp_engineSeconds();
         SDL_LockMutex(avgFPSLock);
-        frameRateAverage.frameShown(mkxp_engineSeconds());
+        scriptFrames.frameShown(now);
+        if (shown)
+            presentedFrames.frameShown(now);
         SDL_UnlockMutex(avgFPSLock);
+    }
+
+    bool presentationDue() {
+        if (hasLastPresentedFrame && mkxp_isPauseRequested())
+            checkPause(lastPresentedFrame);
+
+        const int cap = mkxp_getPresentationFPS();
+        const int pin = threadData->config.fixedFramerate;
+        const int logicRate = pin ? pin : frameRate;
+        const int multiplier = mkxp_getFastForwardMultiplier();
+        if (!PresentationClock::limits(cap, logicRate, multiplier)) {
+            // With a negative pin, swaps may provide the game's only pacing.
+            presentationClock.reset();
+            return true;
+        }
+
+        return presentationClock.due(mkxp_engineSeconds(), cap, logicRate,
+                                     multiplier, mkxp_engineComebacks());
+    }
+
+    bool skipPresentation() {
+        if (presentationDue())
+            return false;
+
+        // Same pacing and public frame_count as the swap this replaces.
+        fpsLimiter.delay();
+        ++frameCount;
+        threadData->ethread->notifyFrame();
+        updateAvgFPS(false);
+        return true;
     }
 
     /* Blit the frozen scene buffer to the screen and swap.
      * Used by fadeout/fadein when the scene is frozen. */
     void blitFrozenSceneToScreen() {
+        if (skipPresentation()) return;
         int scaleIsSpecial = GLMeta::blitScaleIsSpecial(
             integerScaleBuffer, false,
             IntRect(0, 0, scSize.x, scSize.y),
@@ -1359,6 +1397,7 @@ void Graphics::update(bool checkForShutdown) {
     if (p->fpsLimiter.frameSkipRequired()) {
         if (p->useFrameSkip) {
             /* Skip frame */
+            p->checkPause(p->screen.getPP().frontBuffer());
             p->fpsLimiter.delay();
             ++p->frameCount;
             p->threadData->ethread->notifyFrame();
@@ -1401,6 +1440,7 @@ void Graphics::update(bool checkForShutdown) {
         }
     }
 
+    if (p->skipPresentation()) return;
     p->checkResize();
     p->redrawScreen();
 
@@ -1488,6 +1528,7 @@ void Graphics::transition(int duration, const char *filename, int vague) {
         }
         
         p->checkSyncLock();
+        if (p->skipPresentation()) continue;
         
         const float prog = i * (1.0f / duration);
         
@@ -1558,12 +1599,17 @@ void Graphics::setFrameRate(int value) {
 }
 
 double Graphics::averageFrameRate() {
-    return p->averageFPS();
+    return p->averageFPS(p->scriptFrames);
+}
+
+double Graphics::presentedFrameRate() {
+    return p->averageFPS(p->presentedFrames);
 }
 
 void Graphics::wait(int duration) {
     for (int i = 0; i < duration; ++i) {
         p->checkShutDownReset();
+        if (p->skipPresentation()) continue;
         p->redrawScreen();
         p->framePresented(p->screen.getPP().frontBuffer());
     }
@@ -1799,6 +1845,7 @@ void Graphics::reset() {
     
     /* Reset attributes (frame count not included) */
     p->fpsLimiter.resetFrameAdjust();
+    p->presentationClock.reset();
     p->frozen = false;
     p->screen.getPP().clearBuffers();
     
@@ -1944,9 +1991,11 @@ void Graphics::repaintWait(const AtomicFlag &exitCond, bool checkReset) {
         if (checkReset)
             shState->checkReset();
         
-        FBO::clear();
-        p->metaBlitBufferFlippedScaled(scaleIsSpecial);
-        graphicsGL_SwapWindow(p->threadData->window);
+        if (p->presentationDue()) {
+            FBO::clear();
+            p->metaBlitBufferFlippedScaled(scaleIsSpecial);
+            graphicsGL_SwapWindow(p->threadData->window);
+        }
         p->fpsLimiter.delay();
         
         p->threadData->ethread->notifyFrame();
