@@ -8,8 +8,10 @@ module EmpoGameTranslation
 
   # Bracket commands carry filenames, variables and (for \\ch) a CSV index and
   # labels. Essentials calls pbShowCommands with the parsed labels later.
-  # Match known bare commands before the generic escape to allow e.g. \\bBlue.
-  CONTROL = /\\(?:[a-zA-Z]+\[[^\[\]\r\n]*\]|\[[^\[\]\r\n]*\]|pog|pn|pm|pg|cn|pt|wd|wm|wu|op|cl|[gnbr]|[a-zA-Z]+|[^\r\n])|<[^<>\r\n]+>|%?\{[^{}\r\n]+\}|%(?:[0-9]+\$)?[-+0-9.]*[sdif]|[\x00-\x1f\x7f]/i unless const_defined?(:CONTROL)
+  # A fork's bare command can start with a stock command, e.g. \\rainbow.
+  # Keep the full identifier except for the stock lowercase formatting markers
+  # immediately before a capitalized word, as in \\bBlue.
+  CONTROL = /\\(?:[a-zA-Z_][a-zA-Z_0-9]*\[[^\[\]\r\n]*\]|\[[^\[\]\r\n]*\]|(?-i:[bnr](?=[A-Z][a-z]+(?![a-zA-Z_0-9])))|[a-zA-Z_][a-zA-Z_0-9]*|[^\r\n])|<[^<>\r\n]+>|%?\{[^{}\r\n]+\}|%(?:[0-9]+\$)?[-+0-9.]*[sdif]|[\x00-\x1f\x7f]/i unless const_defined?(:CONTROL)
   UNSAFE_RESULT = /[\\<>{}\[\]\x00-\x1f\x7f]|%(?:[0-9]+\$)?[-+0-9.]*[sdif]/ unless const_defined?(:UNSAFE_RESULT)
 
   class << self
@@ -125,7 +127,17 @@ module EmpoGameTranslation
       rebuilt = []
       plans.each_with_index do |parts, row|
         if parts
-          rebuilt << parts.map { |p| p.is_a?(Array) ? p[1] + translated[p[0]] + p[2] : p }.join
+          chunks = parts.map do |p|
+            if p.is_a?(Array)
+              chunk = p[1] + translated[p[0]] + p[2]
+              yield(p[1] + queries[p[0]] + p[2], chunk) if block_given?
+              chunk
+            else
+              yield(p, p) if block_given?
+              p
+            end
+          end
+          rebuilt << chunks.join
         else
           rebuilt << values[row]
         end
@@ -170,22 +182,57 @@ module EmpoGameTranslation
       end
     end
 
+    # Recover source spans after a custom refresh consumes a prefix. At a
+    # boundary (including a newline or control) the source suffix is exact.
+    # Inside a translated word keep its remaining glyphs in display language.
+    def remaining_spans(spans, display, rest)
+      return [] if rest.empty?
+      offset = display.size - rest.size
+      return [[rest, rest]] unless offset >= 0 && display[offset..-1] == rest
+      spans.each_with_index do |pair, i|
+        shown = pair[1]
+        if offset == 0
+          return spans[i..-1]
+        elsif offset < shown.size
+          tail = shown[offset..-1]
+          return [[tail, tail]] + spans[i + 1..-1]
+        end
+        offset -= shown.size
+      end
+      [[rest, rest]]
+    end
+
     def stock_refresh(window)
       temp = $game_temp
       return yield unless temp.is_a?(Game_Temp)
       source = temp.message_text
+      cache = @stock_remaining
+      @stock_remaining = nil
       return yield unless source.is_a?(String) && !source.frozen?
-      text = translate([source], window)[0]
-      return yield if text == source
-      # XP's stock refresh consumes its message buffer with slice!. Retain the
-      # same empty/non-empty state, including custom refreshes that replace it.
+      if cache && source.equal?(cache[0]) && source == cache[1]
+        display, spans = cache[2], cache[3]
+      else
+        spans = []
+        display = translate([source], window) { |orig, shown| spans << [orig, shown] }[0]
+        return yield if display == source
+      end
+      text = display.dup
       temp.message_text = text
       begin
         yield
       ensure
-        if temp.message_text.equal?(text)
-          source.replace('') if text.empty?
+        rest = temp.message_text
+        if rest.equal?(text)
+          spans = remaining_spans(spans, display, rest)
+          source.replace(spans.map { |pair| pair[0] }.join)
           temp.message_text = source
+          @stock_remaining = [source, source.dup, rest.dup, spans] unless rest.empty?
+        elsif rest.is_a?(String) && !rest.empty? && rest.size < display.size &&
+            display[-rest.size, rest.size] == rest
+          # Some windows assign a new substring instead of mutating this one.
+          # Honor the replacement object's identity and avoid translating it twice.
+          copy = rest.dup
+          @stock_remaining = [rest, copy, copy, [[copy, copy]]]
         end
       end
     end

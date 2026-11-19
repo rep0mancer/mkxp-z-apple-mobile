@@ -18,7 +18,7 @@ module System
       return answer unless answer == :dictionary
       dict = { 'Hello' => 'Hallo', 'Hola' => 'Hallo', 'Good morning!' => 'Guten Morgen!',
         'Buenos días!' => 'Guten Morgen!', 'Yes' => 'Ja', 'No' => 'Nein', 'Sí' => 'Ja',
-        'uses' => 'setzt ein', 'Ready?' => 'Bereit?', 'Choose' => 'Wähle' }
+        'Blue' => 'Blau', 'uses' => 'setzt ein', 'Ready?' => 'Bereit?', 'Choose' => 'Wähle' }
       requests.last.split("\x1f", -1).map { |key| dict.fetch(key, 'UNEXPECTED') }.join("\x1f")
     end
   end
@@ -47,11 +47,22 @@ end
 
 class Window_Selectable; end
 class Window_Message < Window_Selectable
+  attr_accessor :consume
   def terminate_message; end
   def reset_window; end
   def update_cursor_rect; end
   def refresh
     source = $game_temp.message_text
+    return source.slice!(/\A[^\n]*\n?/) if consume == :line
+    return source.slice!(0, 1) if consume == :glyph
+    if consume == :replace
+      $game_temp.message_text = source[1..-1]
+      return source[0, 1]
+    end
+    if consume == :edit
+      source.replace('NEIN')
+      return :edited
+    end
     saved = source.dup
     source.slice!(0, source.size)
     saved
@@ -79,6 +90,50 @@ $game_temp.message_text = stock_buffer
 check(Window_Message.new.refresh, "Hallo\nJa\nNein\n")
 check([$game_temp.message_text, $game_temp.choice_start, $game_temp.num_input_start], ['', 1, 3])
 check(stock_buffer.empty?, true)
+
+window = Window_Message.new
+window.consume = :line
+stock_buffer = "Hello\nYes\nNo"
+$game_temp.message_text = stock_buffer
+before = System.requests.size
+check(window.refresh, "Hallo\n")
+check(stock_buffer, "Yes\nNo")
+check($game_temp.message_text.equal?(stock_buffer), true)
+check(window.refresh, "Ja\n")
+check(stock_buffer, 'No')
+check(window.refresh, 'Nein')
+check(stock_buffer, '')
+check(System.requests.size - before, 1)
+window.consume = :glyph
+$game_temp.message_text = stock_buffer.replace('Yes')
+before = System.requests.size
+check(window.refresh, 'J')
+check(stock_buffer, 'a')
+check(window.refresh, 'a')
+check(stock_buffer, '')
+check(System.requests.size - before, 1)
+stock_buffer.replace('No')
+check(window.refresh, 'N')
+check(System.requests.size - before, 2)
+window.consume = nil
+check(window.refresh, 'ein')
+check(stock_buffer, '')
+$game_temp.message_text = stock_buffer.replace('Yes')
+window.consume = :replace
+before = System.requests.size
+check(window.refresh, 'J')
+window.consume = nil
+check(window.refresh, 'a')
+check(System.requests.size - before, 1)
+$game_temp.message_text = stock_buffer.replace('Yes')
+window.consume = :edit
+before = System.requests.size
+check(window.refresh, :edited)
+check(stock_buffer, 'NEIN')
+window.consume = nil
+check(window.refresh, 'NEIN')
+check(System.requests.size - before, 1)
+check(stock_buffer, '')
 
 module Essentials; VERSION = '18.1'; end
 module GameData; module Species; end; end
@@ -144,6 +199,16 @@ window = []
 pbMessageDisplay(window, 'Hola Nidoran♀! Flabébé!')
 check(window, ['Hallo Nidoran♀! Flabébé!'])
 check(System.requests.last, 'Hola')
+['\rainbow', '\blue', '\opengl', '\narrator_2', '\rRainbowFeature', '\RAINBOW'].each do |escape|
+  window = []
+  pbMessageDisplay(window, escape + ' Hello')
+  check(window, [escape + ' Hallo'])
+  check(System.requests.last, 'Hello')
+end
+window = []
+pbMessageDisplay(window, '\bBlue')
+check(window, ['\bBlau'])
+check(System.requests.last, 'Blue')
 System.answer = false
 window = []
 pbMessageDisplay(window, 'Hello')
