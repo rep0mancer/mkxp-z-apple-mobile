@@ -184,6 +184,32 @@ end
 battlers[0].dynamic_types = [:WATER]
 battlers[1].dynamic_types = [:FIRE, :FLYING]
 
+# Names are optional, read from the game and do not substitute for IDs.
+GameData.const_set(:Item, Module.new)
+GameData.const_set(:Move, Module.new)
+label_record = Struct.new(:name)
+move_record = label_record.new('Vive-Attaque')
+item_record = label_record.new('Baie Sitrus')
+GameData::Move.define_singleton_method(:try_get) { |id| move_record if id.to_s == 'TACKLE' }
+GameData::Item.define_singleton_method(:try_get) { |id| item_record if id.to_s == 'ORANBERRY' }
+member = snapshot['party'].first
+check(member['moves'].first.values_at('id','name'), ['TACKLE','Vive-Attaque'], 'localized registry move')
+check(member.values_at('item','itemName'), ['ORANBERRY','Baie Sitrus'], 'localized registry item')
+def party_member.item; :ORANBERRY; end # Symbol#name is an ID on MRI 3.
+check(System.probe.call, nil, 'symbol item uses registry and does not emit')
+def party_member.moves; [Struct.new(:id,:pp,:total_pp,:name).new(:TACKLE,3,35,'Éclair Vif')]; end
+held_record = label_record.new('Beere ★')
+party_member.define_singleton_method(:item) { held_record }
+member = snapshot['party'].first
+check(member['moves'].first['name'], 'Éclair Vif', 'move instance display override')
+check(member['itemName'], 'Beere ★', 'item object display override')
+party_member.singleton_class.send(:remove_method, :item, :moves)
+move_record.name = "   "
+item_record.name = nil
+member = snapshot['party'].first
+check(member['moves'].first.key?('name'), false, 'blank display name omitted')
+check(member.key?('itemName'), false, 'missing display name omitted')
+
 # Count top-level serializations, including clear and changed samples.
 telemetry = EmpoEssentialsTelemetry.singleton_class
 telemetry.class_eval do
@@ -278,4 +304,4 @@ check(Battle.ancestors.include?(EmpoEssentialsTelemetry::BattleLifetime), false,
 legacy.name = "\xFF".dup.force_encoding('UTF-8')
 check(snapshot['party'].first['nickname'], 'EEVEE', 'invalid save encoding is contained')
 
-test_passed('Essentials telemetry', 165)
+test_passed('Essentials telemetry', 172)

@@ -148,12 +148,25 @@ module EmpoEssentialsTelemetry
       ids.first(8).map { |id| identifier(id, :Type) }.compact.uniq
     end
 
+    # Symbol#name returns an internal ID on recent Ruby versions. Only record
+    # objects can supply the translated move/item label used in this game.
+    def display_name(record)
+      return nil if record.is_a?(Symbol) || record.is_a?(String)
+      value = read(record, :name)
+      name = text(value) if value.is_a?(String)
+      name unless !name || name.strip.empty?
+    end
+
     def move(obj)
       id = identifier(read(obj, :id), :Move)
       pp = number(read(obj, :pp))
       max = number(read(obj, :total_pp) || read(obj, :totalpp))
       return nil unless id && pp && max
-      { 'id' => id, 'pp' => pp, 'maxPP' => max }
+      result = { 'id' => id, 'pp' => pp, 'maxPP' => max }
+      name = display_name(obj)
+      name ||= display_name(read(GameData::Move, :try_get, id)) if defined?(GameData::Move)
+      result['name'] = name if name
+      result
     end
 
     def member(obj)
@@ -164,13 +177,21 @@ module EmpoEssentialsTelemetry
       return nil unless species && hp && max && level
       status = read(obj, :status)
       status = identifier(status, :Status) unless status == 0
-      item = obj.respond_to?(:item_id) ? read(obj, :item_id) : read(obj, :item)
+      held = read(obj, :item)
+      item = obj.respond_to?(:item_id) ? read(obj, :item_id) : held
+      item_id = identifier(item, :Item) unless item == 0
       moves = read(obj, :moves)
-      { 'species' => species, 'nickname' => text(read(obj, :name)) || species,
+      result = { 'species' => species, 'nickname' => text(read(obj, :name)) || species,
         'level' => level, 'hp' => hp, 'maxHP' => max,
         'status' => (status == 0 || status == 'NONE' ? nil : status),
-        'item' => (item == 0 ? nil : identifier(item, :Item)), 'types' => types(obj),
+        'item' => item_id, 'types' => types(obj),
         'moves' => moves.is_a?(Array) ? moves.first(16).map { |m| move(m) }.compact : [] }
+      if item_id
+        name = display_name(held)
+        name ||= display_name(read(GameData::Item, :try_get, item_id)) if defined?(GameData::Item)
+        result['itemName'] = name if name
+      end
+      result
     end
 
     def stages(obj)
