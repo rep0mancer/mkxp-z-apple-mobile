@@ -209,6 +209,12 @@ item_record.name = nil
 member = snapshot['party'].first
 check(member['moves'].first.key?('name'), false, 'blank display name omitted')
 check(member.key?('itemName'), false, 'missing display name omitted')
+# MKXP's const_missing compatibility layer can return a Class for absent
+# game registries. Class#name exists even though no data record was found.
+missing_class = Class.new
+Object.const_set(:MissingFixtureClass, missing_class)
+GameData::Item.define_singleton_method(:try_get) { |_id| missing_class }
+check(System.probe.call, nil, 'missing class placeholder does not become a held item label')
 
 # Count top-level serializations, including clear and changed samples.
 telemetry = EmpoEssentialsTelemetry.singleton_class
@@ -304,4 +310,4 @@ check(Battle.ancestors.include?(EmpoEssentialsTelemetry::BattleLifetime), false,
 legacy.name = "\xFF".dup.force_encoding('UTF-8')
 check(snapshot['party'].first['nickname'], 'EEVEE', 'invalid save encoding is contained')
 
-test_passed('Essentials telemetry', 172)
+test_passed('Essentials telemetry', 173)

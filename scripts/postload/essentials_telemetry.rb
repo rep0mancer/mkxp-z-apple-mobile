@@ -151,10 +151,10 @@ module EmpoEssentialsTelemetry
     # Symbol#name returns an internal ID on recent Ruby versions. Only record
     # objects can supply the translated move/item label used in this game.
     def display_name(record)
-      return nil if record.is_a?(Symbol) || record.is_a?(String)
+      return nil if record.is_a?(Symbol) || record.is_a?(String) || record.is_a?(Module)
       value = read(record, :name)
       name = text(value) if value.is_a?(String)
-      name unless !name || name.strip.empty?
+      name if name && !name.strip.empty?
     end
 
     def move(obj)
