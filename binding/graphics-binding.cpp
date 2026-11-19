@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "graphics.h"
+#include "script-bootstrap.h"
 #include "sharedstate.h"
 #include "binding-util.h"
 #include "binding-types.h"
@@ -45,6 +46,8 @@ RB_METHOD_GUARD(graphicsUpdate)
 #else
     shState->graphics().update();
 #endif
+    // Back under the GVL, after pause/termination checks in the engine.
+    mkxp::ScriptBootstrap::sampleTelemetry();
     return Qnil;
 }
 RB_METHOD_GUARD_END

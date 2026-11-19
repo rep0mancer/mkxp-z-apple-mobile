@@ -1845,6 +1845,7 @@ static void runRMXPScripts(BacktraceData &btData) {
                 break;
             
             if (i == mainIndex) {
+                mkxp::ScriptBootstrap::loadTelemetryProducer();
                 mkxp::ScriptBootstrap::loadEnginePostloadsBeforeMain();
                 mkxp::ScriptBootstrap::loadCheatPostload();
             }
@@ -1977,6 +1978,7 @@ static void runRMXPScripts(BacktraceData &btData) {
         if (rb_obj_class(exc) != getRbData()->exc[Reset])
             break;
         
+        mkxp::ScriptBootstrap::clearTelemetryProducer();
         if (processReset(false))
             break;
     }
@@ -2470,10 +2472,12 @@ static void mriBindingExecute() {
 
     std::string &customScript = conf.customScript;
     if (!customScript.empty()) {
+        mkxp::ScriptBootstrap::loadTelemetryProducer();
         mkxp::ScriptBootstrap::runConfigScript(customScript, true);
     } else {
         runRMXPScripts(btData);
     }
+    mkxp::ScriptBootstrap::clearTelemetryProducer();
     
 #if RAPI_FULL > 187
     VALUE exc = rb_errinfo();

@@ -16,6 +16,8 @@
 #define IOS_BRIDGE_H
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 // MKXPZ_MOBILE - 1 on platforms where a host app embeds the engine
 // (iOS, iPadOS, tvOS and macOS), 0 elsewhere. Overridable from the
@@ -115,6 +117,11 @@ typedef void (*mkxp_TextInputModeCallback)(int active, void *userdata);
 
 typedef void (*mkxp_ErrorMessageCallback)(const char *message, void *userdata);
 typedef void (*mkxp_InfoMessageCallback)(const char *message, void *userdata);
+
+// Borrowed, length-delimited snapshot. The callback runs synchronously on
+// the Ruby thread and copies any bytes the host needs after returning.
+#define MKXP_MAX_TELEMETRY_BYTES 65536
+typedef void (*mkxp_TelemetryCallback)(const char *json, size_t length, void *userdata);
 
 typedef enum {
     // The game loaded a save. The detail is the file name.
@@ -611,6 +618,14 @@ void        mkxp_signalInfoDismissed(void);
 
 void        mkxp_setInfoMessageCallback(mkxp_InfoMessageCallback cb, void *userdata);
 
+// Install before running the VM. Clearing or replacing a receiver waits for
+// in-flight delivery. Do not reenter the setter from inside its callback.
+void        mkxp_setTelemetryCallback(mkxp_TelemetryCallback cb, void *userdata);
+// Internal to the binding: zero means there is no receiver. A successful
+// session reset also rotates the ticket without removing the host callback.
+uint64_t    mkxp_telemetryTicket(void);
+void        mkxp_publishTelemetry(uint64_t ticket, const char *bytes, size_t length);
+
 // Save events (Engine -> UI). Fire on the engine thread, and the game
 // does not wait.
 void        mkxp_reportSaveEvent(MKXPSaveEvent event, const char *detail);
@@ -832,6 +847,9 @@ static inline void        mkxp_setErrorMessageCallback(mkxp_ErrorMessageCallback
 static inline void        mkxp_presentInfoAndWait(const char *message) { (void)message; }
 static inline void        mkxp_signalInfoDismissed(void) {}
 static inline void        mkxp_setInfoMessageCallback(mkxp_InfoMessageCallback cb, void *userdata) { (void)cb; (void)userdata; }
+static inline void        mkxp_setTelemetryCallback(mkxp_TelemetryCallback cb, void *userdata) { (void)cb; (void)userdata; }
+static inline uint64_t    mkxp_telemetryTicket(void) { return 0; }
+static inline void        mkxp_publishTelemetry(uint64_t ticket, const char *bytes, size_t length) { (void)ticket; (void)bytes; (void)length; }
 static inline void        mkxp_reportSaveEvent(MKXPSaveEvent event, const char *detail) { (void)event; (void)detail; }
 static inline void        mkxp_setSaveEventCallback(mkxp_SaveEventCallback cb, void *userdata) { (void)cb; (void)userdata; }
 

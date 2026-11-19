@@ -33,6 +33,9 @@ void loadConfigPreloadScripts(const Config &conf);
 void loadConfigPostloadScripts(const Config &conf);
 void loadEnginePostloadsBeforeMain();
 void loadCheatPostload();
+void loadTelemetryProducer();
+void clearTelemetryProducer();
+void sampleTelemetry();
 
 } // namespace ScriptBootstrap
 } // namespace mkxp

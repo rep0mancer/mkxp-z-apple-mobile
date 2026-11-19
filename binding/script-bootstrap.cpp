@@ -22,6 +22,7 @@
 #include "filesystem/filesystem.h"
 
 #include <cassert>
+#include <chrono>
 #include <cctype>
 #include <string>
 #include <vector>
@@ -99,6 +100,96 @@ static void runBundledScript(const char *subdir, const char *name, const char *l
                       (std::string("CXX EXC ") + name).c_str());
         Debug() << "Failed to load engine" << subdir << name;
     }
+}
+
+// All Ruby handles below belong to this binding's VM and are accessed under
+// its GVL. The host has no Ruby pointers and cannot enter the VM to poll.
+static VALUE telemetryProc = Qnil;
+static VALUE telemetryThread = Qnil;
+static uint64_t telemetryTicket = 0;
+static bool telemetryBusy = false;
+static bool installingTelemetry = false;
+using TelemetryClock = std::chrono::steady_clock;
+static TelemetryClock::time_point nextSample;
+
+void clearTelemetryProducer() {
+    telemetryProc = telemetryThread = Qnil;
+    telemetryTicket = 0;
+}
+
+RB_METHOD(registerTelemetry) {
+    RB_UNUSED_PARAM;
+    if (!installingTelemetry || !telemetryTicket || !rb_block_given_p())
+        return Qfalse;
+    telemetryProc = rb_block_proc();
+    telemetryThread = rb_thread_current();
+    return Qtrue;
+}
+
+static VALUE installTelemetry(VALUE) {
+    VALUE system = rb_const_get(rb_cObject, rb_intern("System"));
+    if (!RB_TYPE_P(system, T_MODULE))
+        return Qnil;
+    static bool rooted = false;
+    if (!rooted) {
+        rb_gc_register_address(&telemetryProc);
+        rb_gc_register_address(&telemetryThread);
+        rooted = true;
+    }
+    _rb_define_module_function(system, "__register_essentials_telemetry", registerTelemetry);
+    runBundledScript("Postload", "essentials_telemetry", "TELEMETRY");
+    return Qnil;
+}
+
+void loadTelemetryProducer() {
+    clearTelemetryProducer();
+    if (shState->rtData().config.rgssVersion != 1)
+        return;
+    telemetryTicket = mkxp_telemetryTicket();
+    if (!telemetryTicket)
+        return;
+    VALUE previousError = rb_errinfo();
+    int state = 0;
+    installingTelemetry = true;
+    rb_protect(installTelemetry, Qnil, &state);
+    installingTelemetry = false;
+    if (state) {
+        clearTelemetryProducer();
+        rb_set_errinfo(previousError);
+    }
+}
+
+static VALUE callTelemetry(VALUE proc) {
+    static ID call = rb_intern("call");
+    return rb_funcall(proc, call, 0);
+}
+
+void sampleTelemetry() {
+    if (NIL_P(telemetryProc) || telemetryBusy)
+        return;
+    if (mkxp_telemetryTicket() != telemetryTicket) {
+        clearTelemetryProducer();
+        return;
+    }
+    if (TelemetryClock::now() < nextSample || rb_thread_current() != telemetryThread)
+        return;
+
+    // Ruby getters may yield or enter Graphics.update themselves. Retain
+    // the original receiver ticket and stamp completion to avoid bursts.
+    telemetryBusy = true;
+    const uint64_t ticket = telemetryTicket;
+    VALUE previousError = rb_errinfo();
+    int state = 0;
+    VALUE snapshot = rb_protect(callTelemetry, telemetryProc, &state);
+    if (state || snapshot == Qfalse) {
+        clearTelemetryProducer();
+        if (state)
+            rb_set_errinfo(previousError);
+    } else if (RB_TYPE_P(snapshot, T_STRING)) {
+        mkxp_publishTelemetry(ticket, RSTRING_PTR(snapshot), RSTRING_LEN(snapshot));
+    }
+    nextSample = TelemetryClock::now() + std::chrono::milliseconds(500);
+    telemetryBusy = false;
 }
 
 /* --- Raise tracing ---
