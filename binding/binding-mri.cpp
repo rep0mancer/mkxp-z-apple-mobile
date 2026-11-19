@@ -1848,6 +1848,7 @@ static void runRMXPScripts(BacktraceData &btData) {
                 mkxp::ScriptBootstrap::loadTelemetryProducer();
                 mkxp::ScriptBootstrap::loadEnginePostloadsBeforeMain();
                 mkxp::ScriptBootstrap::loadCheatPostload();
+                mkxp::ScriptBootstrap::loadGameTranslation();
             }
             
             VALUE script = rb_ary_entry(scriptArray, i);
@@ -1979,6 +1980,7 @@ static void runRMXPScripts(BacktraceData &btData) {
             break;
         
         mkxp::ScriptBootstrap::clearTelemetryProducer();
+        mkxp::ScriptBootstrap::clearGameTranslation();
         if (processReset(false))
             break;
     }
@@ -2473,11 +2475,13 @@ static void mriBindingExecute() {
     std::string &customScript = conf.customScript;
     if (!customScript.empty()) {
         mkxp::ScriptBootstrap::loadTelemetryProducer();
+        mkxp::ScriptBootstrap::loadGameTranslation();
         mkxp::ScriptBootstrap::runConfigScript(customScript, true);
     } else {
         runRMXPScripts(btData);
     }
     mkxp::ScriptBootstrap::clearTelemetryProducer();
+    mkxp::ScriptBootstrap::clearGameTranslation();
     
 #if RAPI_FULL > 187
     VALUE exc = rb_errinfo();

@@ -6,6 +6,7 @@
 
 #include "app_bridge.h"
 #include "util/telemetrychannel.h"
+#include "util/translationchannel.h"
 
 // On non-mobile platforms app_bridge.h defines the whole API as
 // inline no-op stubs. This file must compile to nothing so the two
@@ -233,6 +234,7 @@ static BridgeCallback<mkxp_InfoMessageCallback> s_infoMsgCb;
 
 static BridgeCallback<mkxp_SaveEventCallback> s_saveEventCb;
 static TelemetryChannel s_telemetry;
+static TranslationChannel s_translation;
 
 #if MKXPZ_MOBILE
 static std::mutex s_errorDismissMutex;
@@ -938,6 +940,26 @@ void mkxp_reportSaveEvent(MKXPSaveEvent event, const char *detail) {
     s_saveEventCb.fire(event, text);
 }
 
+void mkxp_setTranslationCallback(mkxp_TranslationCallback cb, void *userdata) {
+    s_translation.set(cb, userdata);
+}
+
+void mkxp_completeTranslation(uint64_t id, const char *bytes, size_t length) {
+    s_translation.complete(id, bytes, length);
+}
+
+uint64_t mkxp_translationTicket(void) { return s_translation.ticket(); }
+
+void mkxp_retireTranslation(uint64_t ticket) { s_translation.retire(ticket); }
+
+uint64_t mkxp_startTranslation(uint64_t ticket, const char *bytes, size_t length) {
+    return s_translation.start(ticket, bytes, length);
+}
+
+int mkxp_pollTranslation(uint64_t ticket, uint64_t id, char *out, size_t capacity) {
+    return s_translation.poll(ticket, id, out, capacity);
+}
+
 void mkxp_setTelemetryCallback(mkxp_TelemetryCallback cb, void *userdata) {
     s_telemetry.set(cb, userdata);
 }
@@ -1322,6 +1344,7 @@ void mkxp_killSession(void) {
 // guarantee than a "back to default" reset.
 void mkxp_resetSessionState(void) {
     s_telemetry.reset();
+    s_translation.reset();
     s_fastForwardMultiplier.store(1, std::memory_order_release);
     s_cheatsEnabled.store(false, std::memory_order_release);
     // A crash-terminated session must not leak its viewport region

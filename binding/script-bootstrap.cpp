@@ -159,6 +159,59 @@ void loadTelemetryProducer() {
     }
 }
 
+// Accessed only under this Ruby VM's GVL. Host responses never enter Ruby.
+static uint64_t translationTicket = 0;
+
+void clearGameTranslation() {
+    if (translationTicket)
+        mkxp_retireTranslation(translationTicket);
+    translationTicket = 0;
+}
+
+RB_METHOD(startTranslation) {
+    (void)self;
+    if (argc != 1 || !RB_TYPE_P(argv[0], T_STRING))
+        return Qnil;
+    uint64_t id = mkxp_startTranslation(translationTicket, RSTRING_PTR(argv[0]), RSTRING_LEN(argv[0]));
+    return id ? ULL2NUM(id) : Qnil;
+}
+
+RB_METHOD(pollTranslation) {
+    (void)self;
+    if (argc != 1 || !FIXNUM_P(argv[0]) || FIX2LONG(argv[0]) <= 0)
+        return Qfalse;
+    char bytes[MKXP_MAX_TRANSLATION_BYTES];
+    int count = mkxp_pollTranslation(translationTicket, FIX2LONG(argv[0]), bytes, sizeof(bytes));
+    if (count <= 0)
+        return count == 0 ? Qnil : Qfalse;
+    return rb_utf8_str_new(bytes, count);
+}
+
+static VALUE installTranslation(VALUE) {
+    VALUE system = rb_const_get(rb_cObject, rb_intern("System"));
+    if (!RB_TYPE_P(system, T_MODULE))
+        return Qnil;
+    _rb_define_module_function(system, "__game_translation_start", startTranslation);
+    _rb_define_module_function(system, "__game_translation_result", pollTranslation);
+    runBundledScript("Postload", "game_translation", "TRANSLATION");
+    return Qnil;
+}
+
+void loadGameTranslation() {
+    clearGameTranslation();
+    if (shState->rtData().config.rgssVersion != 1)
+        return;
+    translationTicket = mkxp_translationTicket();
+    if (!translationTicket)
+        return;
+    VALUE previousError = rb_errinfo();
+    int state = 0;
+    rb_protect(installTranslation, Qnil, &state);
+    if (state)
+        clearGameTranslation();
+    rb_set_errinfo(previousError);
+}
+
 static VALUE callTelemetry(VALUE proc) {
     static ID call = rb_intern("call");
     return rb_funcall(proc, call, 0);

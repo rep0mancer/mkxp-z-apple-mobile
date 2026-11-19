@@ -123,6 +123,11 @@ typedef void (*mkxp_InfoMessageCallback)(const char *message, void *userdata);
 #define MKXP_MAX_TELEMETRY_BYTES 65536
 typedef void (*mkxp_TelemetryCallback)(const char *json, size_t length, void *userdata);
 
+// Copy or enqueue the request, then return before completing it or calling
+// back into the channel. Both directions carry length-delimited UTF-8.
+#define MKXP_MAX_TRANSLATION_BYTES 16384
+typedef void (*mkxp_TranslationCallback)(uint64_t id, const char *bytes, size_t length, void *userdata);
+
 typedef enum {
     // The game loaded a save. The detail is the file name.
     MKXP_SAVE_LOAD     = 0,
@@ -626,6 +631,13 @@ void        mkxp_setTelemetryCallback(mkxp_TelemetryCallback cb, void *userdata)
 uint64_t    mkxp_telemetryTicket(void);
 void        mkxp_publishTelemetry(uint64_t ticket, const char *bytes, size_t length);
 
+void        mkxp_setTranslationCallback(mkxp_TranslationCallback cb, void *userdata);
+void        mkxp_completeTranslation(uint64_t id, const char *bytes, size_t length);
+uint64_t    mkxp_translationTicket(void);
+void        mkxp_retireTranslation(uint64_t ticket);
+uint64_t    mkxp_startTranslation(uint64_t ticket, const char *bytes, size_t length);
+int         mkxp_pollTranslation(uint64_t ticket, uint64_t id, char *out, size_t capacity);
+
 // Save events (Engine -> UI). Fire on the engine thread, and the game
 // does not wait.
 void        mkxp_reportSaveEvent(MKXPSaveEvent event, const char *detail);
@@ -848,6 +860,12 @@ static inline void        mkxp_presentInfoAndWait(const char *message) { (void)m
 static inline void        mkxp_signalInfoDismissed(void) {}
 static inline void        mkxp_setInfoMessageCallback(mkxp_InfoMessageCallback cb, void *userdata) { (void)cb; (void)userdata; }
 static inline void        mkxp_setTelemetryCallback(mkxp_TelemetryCallback cb, void *userdata) { (void)cb; (void)userdata; }
+static inline void mkxp_setTranslationCallback(mkxp_TranslationCallback cb, void *userdata) { (void)cb; (void)userdata; }
+static inline void mkxp_completeTranslation(uint64_t id, const char *bytes, size_t length) { (void)id; (void)bytes; (void)length; }
+static inline void mkxp_retireTranslation(uint64_t ticket) { (void)ticket; }
+static inline uint64_t mkxp_translationTicket(void) { return 0; }
+static inline uint64_t mkxp_startTranslation(uint64_t ticket, const char *bytes, size_t length) { (void)ticket; (void)bytes; (void)length; return 0; }
+static inline int mkxp_pollTranslation(uint64_t ticket, uint64_t id, char *out, size_t capacity) { (void)ticket; (void)id; (void)out; (void)capacity; return -1; }
 static inline uint64_t    mkxp_telemetryTicket(void) { return 0; }
 static inline void        mkxp_publishTelemetry(uint64_t ticket, const char *bytes, size_t length) { (void)ticket; (void)bytes; (void)length; }
 static inline void        mkxp_reportSaveEvent(MKXPSaveEvent event, const char *detail) { (void)event; (void)detail; }

@@ -34,6 +34,8 @@ void loadConfigPostloadScripts(const Config &conf);
 void loadEnginePostloadsBeforeMain();
 void loadCheatPostload();
 void loadTelemetryProducer();
+void loadGameTranslation();
+void clearGameTranslation();
 void clearTelemetryProducer();
 void sampleTelemetry();
 
