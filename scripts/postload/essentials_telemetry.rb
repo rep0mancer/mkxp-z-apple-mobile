@@ -190,6 +190,31 @@ module EmpoEssentialsTelemetry
       result
     end
 
+    # The PBS type chart, before move-specific, item and ability effects.
+    # Normalize the value returned by this game's own Effectiveness.calculate.
+    # v19/20 encode a neutral three-type result as 8; v21 returns a multiplier.
+    def add_matchups(defenders, attackers, neutral)
+      attacks = attackers.map { |b| b['types'] }.flatten.uniq
+      return if attacks.empty? || attacks.size * defenders.size > 64
+      ids = {}
+      (attacks + defenders.map { |b| b['types'] }.flatten).uniq.each do |name|
+        ids[name] = read(read(GameData::Type, :try_get, name), :id)
+      end
+      defenders.each do |b|
+        target = b['types'].map { |name| ids[name] }
+        next if target.empty? || target.include?(nil)
+        chart = {}
+        attacks.each do |name|
+          next unless ids[name]
+          value = read(Effectiveness, :calculate, ids[name], *target)
+          next unless value.is_a?(Integer) || value.is_a?(Float)
+          multiplier = value / neutral.to_f
+          chart[name] = multiplier if multiplier >= 0 && multiplier <= Float::MAX
+        end
+        b['incomingEffectiveness'] = chart unless chart.empty?
+      end
+    end
+
     def battle_state
       list = read(@battle, :battlers)
       return nil unless list.is_a?(Array)
@@ -205,6 +230,17 @@ module EmpoEssentialsTelemetry
           'index' => index, 'species' => species, 'types' => types(b, true),
           'hpPercent' => [[(hp * 100 + max / 2) / max, 100].min, 0].max,
           'stages' => stages(b) }
+      end
+      if defined?(GameData::Type) && defined?(Effectiveness)
+        neutral = if defined?(Effectiveness::NORMAL_EFFECTIVE_MULTIPLIER)
+                    Effectiveness::NORMAL_EFFECTIVE_MULTIPLIER
+                  elsif defined?(Effectiveness::NORMAL_EFFECTIVE_ONE) && defined?(Effectiveness::NORMAL_EFFECTIVE)
+                    Effectiveness::NORMAL_EFFECTIVE
+                  end
+        if (neutral.is_a?(Integer) || neutral.is_a?(Float)) && neutral > 0 && neutral <= Float::MAX
+          add_matchups(allies, opponents, neutral)
+          add_matchups(opponents, allies, neutral)
+        end
       end
       { 'allies' => allies, 'opponents' => opponents }
     end
@@ -284,7 +320,7 @@ module EmpoEssentialsTelemetry
         '"' + obj.gsub(/["\\\x00-\x1f]/) { |c|
           c == '"' || c == '\\' ? '\\' + c : '\\u%04x' % c.unpack('C')[0]
         } + '"'
-      when Integer then obj.to_s
+      when Integer, Float then obj.to_s
       when Array then '[' + obj.map { |v| json(v) }.join(',') + ']'
       when Hash then '{' + obj.map { |k, v| json(k) + ':' + json(v) }.join(',') + '}'
       when TrueClass then 'true'

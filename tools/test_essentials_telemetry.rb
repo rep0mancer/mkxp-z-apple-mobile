@@ -124,6 +124,7 @@ expected = { 'species' => 'EEVEE', 'nickname' => party_member.name, 'level' => 7
   result = battle.pbStartBattle(:token) do
     live = snapshot.fetch('battle')
     check(live['allies'].first['types'], ['WATER'], v)
+    check(live['allies'].first['incomingEffectiveness'], nil, 'unsupported chart leaves the battle usable')
     check(live['opponents'].map { |foe| foe['index'] }, [1, 3], v)
     check(live['opponents'].first['hpPercent'], 19, v)
     check(live['opponents'].first['types'], %w[FIRE FLYING], v)
@@ -134,6 +135,54 @@ expected = { 'species' => 'EEVEE', 'nickname' => party_member.name, 'level' => 7
   check(result, [:token, :result], 'game return value and passed block')
   check(snapshot['battle'], nil, 'battle ended')
 end
+
+# Use each runtime's scale with a custom attack type, an extra defensive type,
+# immunity and a mid-battle type change. A partial chart cannot imply neutral.
+module GameData::Type
+  Record = Struct.new(:id)
+  def self.try_get(name)
+    Record.new(name.to_sym) if %w[WATER GHOST FIRE FLYING SOUND].include?(name.to_s)
+  end
+end
+module Effectiveness
+  class << self
+    attr_accessor :neutral
+    def calculate(attack, *defense)
+      return Float::NAN if attack == :GHOST
+      chart = { :SOUND => { :FIRE => 2, :FLYING => 2, :GHOST => 0 },
+                :FIRE => { :WATER => 0.5, :SOUND => 0.5 } }
+      defense.inject(neutral) { |result, type| result * (chart.fetch(attack, {})[type] || 1) }
+    end
+  end
+end
+battle = Battle.new
+battle.battlers = battlers
+battlers[0].dynamic_types = [:WATER, :SOUND]
+battlers[1].dynamic_types = [:FIRE, :FLYING, :GHOST]
+[8, 1.0].each do |scale|
+  Effectiveness.neutral = scale
+  if scale == 8
+    Effectiveness.const_set(:NORMAL_EFFECTIVE_ONE, 2)
+    Effectiveness.const_set(:NORMAL_EFFECTIVE, scale)
+  else
+    Effectiveness.const_set(:NORMAL_EFFECTIVE_MULTIPLIER, scale)
+  end
+  battle.pbStartBattle(:token) do
+    live = snapshot['battle']
+    check(live['allies'][0]['incomingEffectiveness'], { 'FIRE' => 0.25, 'FLYING' => 1, 'WATER' => 1 }, 'resistance and invalid opposing GHOST')
+    check(live['opponents'][0]['incomingEffectiveness'], { 'SOUND' => 0, 'WATER' => 1 }, 'third type grants immunity')
+    check(live['opponents'][1]['incomingEffectiveness'], { 'SOUND' => 1, 'WATER' => 1 }, 'distinct foe')
+    check(System.probe.call, nil, 'unchanged type chart emits nothing')
+    battlers[1].dynamic_types = [:FIRE, :FLYING]
+    check(snapshot['battle']['opponents'][0]['incomingEffectiveness']['SOUND'], 4, 'changed active typing')
+    battlers[1].dynamic_types = [:FIRE, :UNKNOWN]
+    check(snapshot['battle']['opponents'][0]['incomingEffectiveness'], nil, 'incomplete defending types')
+    battlers[1].dynamic_types = [:FIRE, :FLYING, :GHOST]
+  end
+  check(snapshot['battle'], nil, 'closed chart')
+end
+battlers[0].dynamic_types = [:WATER]
+battlers[1].dynamic_types = [:FIRE, :FLYING]
 
 # Count top-level serializations, including clear and changed samples.
 telemetry = EmpoEssentialsTelemetry.singleton_class
@@ -229,4 +278,4 @@ check(Battle.ancestors.include?(EmpoEssentialsTelemetry::BattleLifetime), false,
 legacy.name = "\xFF".dup.force_encoding('UTF-8')
 check(snapshot['party'].first['nickname'], 'EEVEE', 'invalid save encoding is contained')
 
-test_passed('Essentials telemetry', 145)
+test_passed('Essentials telemetry', 165)
