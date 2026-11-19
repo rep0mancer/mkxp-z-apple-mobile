@@ -20,6 +20,8 @@
 */
 
 #include "audiostream.h"
+#include "app_bridge.h"
+#include "workerpause.h"
 
 #include "util.h"
 #include "exception.h"
@@ -53,13 +55,13 @@ AudioStream::~AudioStream()
 {
 	if (fade.thread)
 	{
-		fade.reqTerm.set();
+		AudioWorkerPause::shared().stop(fade.reqTerm);
 		SDL_WaitThread(fade.thread, 0);
 	}
 
 	if (fadeIn.thread)
 	{
-		fadeIn.rqTerm.set();
+		AudioWorkerPause::shared().stop(fadeIn.rqTerm);
 		SDL_WaitThread(fadeIn.thread, 0);
 	}
 
@@ -200,16 +202,15 @@ void AudioStream::fadeOut(int duration)
 
 	if (fade.thread)
 	{
-		fade.reqFini.set();
+		// fade.active is cleared after the worker releases the stream lock.
 		SDL_WaitThread(fade.thread, 0);
 		fade.thread = 0;
 	}
 
 	fade.active.set();
-	fade.msStep = 1.0f / duration;
 	fade.reqFini.clear();
-	fade.reqTerm.clear();
-	fade.startTicks = SDL_GetTicks();
+	fade.reqTerm.store(false);
+	fade.timer = AudioFadeTimer(mkxp_engineSeconds(), duration);
 
 	fade.thread = createSDLThread
 		<AudioStream, &AudioStream::fadeOutThread>(this, fade.threadName);
@@ -268,6 +269,7 @@ void AudioStream::finiFadeOutInt()
 	if (fade.thread)
 	{
 		fade.reqFini.set();
+		AudioWorkerPause::shared().stop(fade.reqTerm);
 		SDL_WaitThread(fade.thread, 0);
 		fade.thread = 0;
 	}
@@ -275,6 +277,7 @@ void AudioStream::finiFadeOutInt()
 	if (fadeIn.thread)
 	{
 		fadeIn.rqFini.set();
+		AudioWorkerPause::shared().stop(fadeIn.rqTerm);
 		SDL_WaitThread(fadeIn.thread, 0);
 		fadeIn.thread = 0;
 	}
@@ -286,8 +289,8 @@ void AudioStream::startFadeIn()
 	assert(!fadeIn.thread);
 
 	fadeIn.rqFini.clear();
-	fadeIn.rqTerm.clear();
-	fadeIn.startTicks = SDL_GetTicks();
+	fadeIn.rqTerm.store(false);
+	fadeIn.timer = AudioFadeTimer(mkxp_engineSeconds(), 1000);
 
 	fadeIn.thread = createSDLThread
 		<AudioStream, &AudioStream::fadeInThread>(this, fadeIn.threadName);
@@ -297,19 +300,18 @@ void AudioStream::fadeOutThread()
 {
 	while (true)
 	{
-		/* Just immediately terminate on request */
-		if (fade.reqTerm)
+		auto step = AudioWorkerPause::shared().lockMaintenance(fade.reqTerm);
+		if (!step && !fade.reqFini)
 			break;
 
 		lockStream();
 
-		uint32_t curDur = SDL_GetTicks() - fade.startTicks;
-		float resVol = 1.0f - (curDur*fade.msStep);
+		float resVol = 1.0f - fade.timer.progress(mkxp_engineSeconds());
 
 		ALStream::State state = stream.queryState();
 
 		if (state != ALStream::Playing
-		|| resVol < 0
+		|| resVol <= 0
 		|| fade.reqFini)
 		{
 			if (state != ALStream::Paused)
@@ -325,6 +327,7 @@ void AudioStream::fadeOutThread()
 
 		unlockStream();
 
+		step.unlock();
 		SDL_Delay(AUDIO_SLEEP);
 	}
 
@@ -335,14 +338,13 @@ void AudioStream::fadeInThread()
 {
 	while (true)
 	{
-		if (fadeIn.rqTerm)
+		auto step = AudioWorkerPause::shared().lockMaintenance(fadeIn.rqTerm);
+		if (!step && !fadeIn.rqFini)
 			break;
 
 		lockStream();
 
-		/* Fade in duration is always 1 second */
-		uint32_t cur = SDL_GetTicks() - fadeIn.startTicks;
-		float prog = cur / 1000.0f;
+		float prog = fadeIn.timer.progress(mkxp_engineSeconds());
 
 		ALStream::State state = stream.queryState();
 
@@ -360,6 +362,7 @@ void AudioStream::fadeInThread()
 
 		unlockStream();
 
+		step.unlock();
 		SDL_Delay(AUDIO_SLEEP);
 	}
 }

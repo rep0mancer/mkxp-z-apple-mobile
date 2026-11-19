@@ -19,6 +19,7 @@ public:
 
     void setPaused(bool value) {
         {
+            std::lock_guard<std::mutex> finishCurrentStep(maintenance);
             std::lock_guard<std::mutex> lock(mutex);
             paused.store(value);
         }
@@ -41,6 +42,18 @@ public:
         return !stopping.load();
     }
 
+    // Only the ME watcher and fade workers change playback decisions. Let
+    // their current step finish before the host snapshots playing sources.
+    // Stream refillers use the separate mutex so a fade can stop and join
+    // one safely while it owns this lock.
+    std::unique_lock<std::mutex> lockMaintenance(const std::atomic<bool> &stopping) {
+        while (wait(stopping)) {
+            std::unique_lock<std::mutex> lock(maintenance);
+            if (!paused.load() && !stopping.load()) return lock;
+        }
+        return {};
+    }
+
     // Serialize starting an AL source with the host taking its list of
     // playing sources. A late first buffer must not start it during a pause.
     template<class Play>
@@ -51,6 +64,7 @@ public:
     }
 
 private:
+    std::mutex maintenance;
     std::mutex mutex;
     std::condition_variable changed;
     std::atomic<bool> paused{false};

@@ -405,8 +405,7 @@ void ALStream::streamData()
 
 	for (int i = 0; i < STREAM_BUFS; ++i)
 	{
-		if (threadTermReq)
-			return;
+		if (!AudioWorkerPause::shared().wait(threadTermReq)) return;
 
 		AL::Buffer::ID buf = alBuf[i];
 

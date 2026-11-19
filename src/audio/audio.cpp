@@ -116,7 +116,8 @@ struct AudioPrivate
 		{
 			syncPoint.passSecondarySync();
 
-			if (!AudioWorkerPause::shared().wait(meWatch.termReq))
+			auto step = AudioWorkerPause::shared().lockMaintenance(meWatch.termReq);
+			if (!step)
 				return;
 
 			switch (meWatch.state)
@@ -285,6 +286,7 @@ struct AudioPrivate
 			}
 			}
 
+			step.unlock();
 			SDL_Delay(AUDIO_SLEEP);
 		}
 	}
@@ -463,13 +465,16 @@ void Audio::pauseSources()
 
 void Audio::resumeSources()
 {
-	for (ALuint src : p->pausedSourceIDs)
-		alSourcePlay(src);
+	for (ALuint src : p->pausedSourceIDs) {
+		ALint state = 0;
+		alGetSourcei(src, AL_SOURCE_STATE, &state);
+		if (state == AL_PAUSED) alSourcePlay(src);
+	}
 	p->pausedSourceIDs.clear();
 	AudioWorkerPause::shared().setPaused(false);
 }
 
 Audio::~Audio() {
-    AudioWorkerPause::shared().setPaused(false);
     delete p;
+    AudioWorkerPause::shared().setPaused(false);
 }

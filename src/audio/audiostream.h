@@ -24,6 +24,7 @@
 
 #include "al-util.h"
 #include "alstream.h"
+#include "fadetimer.h"
 #include "sdl-util.h"
 
 #include <string>
@@ -95,29 +96,24 @@ struct AudioStream
 
 		/* Request fade thread to terminate
 		 * immediately */
-		AtomicFlag reqTerm;
+		std::atomic<bool> reqTerm{false};
 
 		SDL_Thread *thread;
 		std::string threadName;
 
-		/* Amount of reduced absolute volume
-		 * per ms of fade time */
-		float msStep;
-
-		/* Ticks at start of fade */
-		uint32_t startTicks;
+		AudioFadeTimer timer;
 	} fade;
 
 	/* Fade in */
 	struct
 	{
 		AtomicFlag rqFini;
-		AtomicFlag rqTerm;
+		std::atomic<bool> rqTerm{false};
 
 		SDL_Thread *thread;
 		std::string threadName;
 
-		uint32_t startTicks;
+		AudioFadeTimer timer;
 	} fadeIn;
 
 	AudioStream(ALStream::LoopMode loopMode,
