@@ -10,6 +10,9 @@
 #include <assert.h>
 #include <cctype>
 #include <dirent.h>
+#include <regex>
+#include <strings.h>
+#include <sys/stat.h>
 
 #include <stdint.h>
 #include <vector>
@@ -53,6 +56,62 @@ void fillStringVec(json::value &item, std::vector<std::string> &vector) {
             continue;
         
         vector.push_back(array[i].as_string());
+    }
+}
+
+// Look only inside the game. An imported symlink must not turn this
+// fallback into another external mount. Prefer the exact spelling.
+static std::string localDirectory(const std::string &parent, const char *name) {
+    DIR *dir = opendir(parent.c_str());
+    if (!dir)
+        return {};
+
+    std::string result;
+    while (auto *entry = readdir(dir)) {
+        if (strcasecmp(entry->d_name, name) != 0)
+            continue;
+        std::string path = parent + "/" + entry->d_name;
+        struct stat info;
+        if (lstat(path.c_str(), &info) != 0 || !S_ISDIR(info.st_mode))
+            continue;
+        if (strcmp(entry->d_name, name) == 0) {
+            result = path;
+            break;
+        }
+        if (result.empty() || path < result)
+            result = path;
+    }
+    closedir(dir);
+    return result;
+}
+
+static void resolveRunaRtpMounts(std::vector<std::string> &mounts) {
+    for (auto it = mounts.begin(); it != mounts.end();) {
+        if (it->empty() || it->front() != '/') {
+            ++it;
+            continue;
+        }
+
+        // Runa records its own iOS data container in exported mkxp.json.
+        // Match the specific XP pack, without accessing that private path.
+        static const std::regex runaXP(
+            R"((/private)?/var/mobile/Containers/Data/Application/)"
+            R"([[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12})"
+            R"(/Library/Application Support/runa/rtp/xp/?)", std::regex::icase);
+        if (!std::regex_match(*it, runaXP)) {
+            ++it;
+            continue;
+        }
+
+        const std::string rtp = localDirectory(".", "rtp");
+        const std::string xp = rtp.empty() ? "" : localDirectory(rtp, "xp");
+        if (xp.empty()) {
+            Debug() << "Skipping imported Runa XP RTP mount; using game assets and remaining mounts";
+            it = mounts.erase(it);
+        } else {
+            Debug() << "Using bundled XP RTP:" << xp;
+            *it++ = xp;
+        }
     }
 }
 
@@ -409,6 +468,8 @@ try { exp } catch (...) {}
     fillStringVec(opts["postloadScript"], postloadScripts);
     fillStringVec(opts["RTP"], rtps);
     fillStringVec(opts["patches"], patches);
+    resolveRunaRtpMounts(rtps);
+    resolveRunaRtpMounts(patches);
     fillStringVec(opts["scriptPatches"], scriptPatches);
     fillStringVec(opts["fontSub"], fontSubs);
     for (std::string & fontSub : fontSubs)

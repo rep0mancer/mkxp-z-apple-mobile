@@ -169,6 +169,15 @@ jobs:
           tools/run-engine-tests.sh --no-build --timeout 300 \
             --suite fast_forward_clock.rb --fast-forward 4
 
+      - name: Assets in a game imported from Runa
+        if: env.TEST == 'true' && !cancelled() && steps.host.outcome == 'success'
+        run: |
+          tools/run-engine-tests.sh --no-build --timeout 300 \
+            --suite runa_rtp.rb --config '{
+              "RTP": ["Graphics/Lookup", "/var/mobile/Containers/Data/Application/12345678-1234-1234-1234-123456789ABC/Library/Application Support/runa/rtp/xp"],
+              "patches": ["/private/var/mobile/Containers/Data/Application/12345678-1234-1234-1234-123456789ABC/Library/Application Support/Runa/RTP/XP/"]
+            }'
+
       # legacy_methods_off.rb goes first, because the other suites
       # load code that it must not see. The win32 text stand-ins load
       # only on Ruby 1.9 and later.
